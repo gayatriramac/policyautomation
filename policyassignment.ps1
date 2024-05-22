@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
 This script creates Policy Assignment files with the policy definition files , policy Intiatives and data in the metadata.csv according to the BATCH details.
- 
+ This metadata.csv contains the Policy Set Definitions name , Policy Definition name and Policy Assignment names, it contains the corresponding mapping.
 .DESCRIPTION
 This script updated the Policy Assignment files in the Policy Assignment folder.
  
