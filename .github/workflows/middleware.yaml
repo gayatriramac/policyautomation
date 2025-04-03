@@ -42,7 +42,7 @@ jobs:
   Superlinter:
     uses: ./.github/workflows/superlinter.yaml
     with:
-      branches: demo
+      branches: main
       validate_all_codebase: false
       disable_errors: true
       
