@@ -3,7 +3,7 @@ name: Deploy Storage and Keyvault Resources
 on:
    push:
     branches:
-    - "demo"
+    - "main"
    workflow_dispatch:
         inputs:
          
@@ -35,7 +35,7 @@ env:
   SUB_NAME: "pxs-cn-is-azplg0024-sub"
 
 jobs:
-    Superlinter:
+  Superlinter:
     uses: ./.github/workflows/superlinter.yaml
     with:
       branches: demo
