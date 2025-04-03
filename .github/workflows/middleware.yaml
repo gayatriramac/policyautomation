@@ -19,11 +19,15 @@ on:
             type: choice
             options:
               - innovation
+# permissions:
+#   id-token: write
+#   contents: read
+#   statuses: write
 permissions:
-  id-token: write
-  contents: read
+  contents: write
+  pull-requests: write
   statuses: write
-
+  issues: write
 
 env:
   #MODULE_TEST_FILE_PATH: "tests/e2e/defaults/main.test.bicep"   
