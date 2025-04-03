@@ -1,0 +1,41 @@
+name: SuperLinter
+description: Lint code using GitHub Super Linter with selective validation
+
+inputs:
+  module_path:
+    description: "Path to the module in feature branch"
+    required: true
+  github_token:
+    description: "GitHub token for authentication"
+    required: true
+  validate_markdown:
+    description: "Toggle markdown validation based on input"
+    required: false
+    default: "true"
+  validate_all_codebase:
+    description: "Toggle codebase validation based on input"
+    required: false
+    default: "true"
+  disable_all_linters:
+    description: "Toggle linter validation based on input"
+    required: false
+    default: "false"
+  validate_github_actions:
+    description: "Toggle github actions validation based on input"
+    required: false
+    default: "true"
+runs:
+  using: "composite"
+  steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Super-linter
+      uses: super-linter/super-linter@v7
+      env:
+        GITHUB_TOKEN: ${{ inputs.github_token }}
+        VALIDATE_MARKDOWN: ${{ inputs.validate_markdown }}
+        VALIDATE_GITHUB_ACTIONS: ${{ inputs.validate_github_actions }}
+        VALIDATE_ALL_CODEBASE: ${{ inputs.validate_all_codebase }}
