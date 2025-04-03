@@ -1,0 +1,227 @@
+name: Super Linter Reusable Workflow
+
+on:
+  workflow_call:
+    inputs:
+      branches:
+        required: true
+        type: string
+      validate_all_codebase:
+        required: false
+        type: boolean
+        default: true
+      disable_errors:
+        required: true
+        type: boolean
+   
+permissions:
+  contents: write
+  pull-requests: write
+  statuses: write
+  issues: write
+
+jobs:
+  lint:
+    name: Run Linters and Process Results
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      statuses: write
+      issues: write
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.head_ref || github.ref_name }}
+
+      - name: Run Super Linter
+        id: linter
+        uses: super-linter/super-linter@v5
+        continue-on-error: true
+        env:
+          VALIDATE_ALL_CODEBASE: ${{ inputs.validate_all_codebase }}
+          DISABLE_ERRORS: ${{ inputs.disable_errors }}
+          DEFAULT_BRANCH: ${{ inputs.branches }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LOG_LEVEL: DEBUG
+          CREATE_LOG_FILE: true
+          LOG_FILE: super-linter.log
+          REPORT_JSON_FILE: true
+          JSON_FILE: lint_report.json
+
+      - name: Process Lint Results
+        id: process_results
+        run: |
+          mkdir -p .github/linter-reports
+          
+          # Handle JSON report
+          if [ -f "lint_report.json" ]; then
+            cp lint_report.json .github/linter-reports/
+          else
+            echo '{"issues":[]}' > .github/linter-reports/lint_report.json
+          fi
+          
+          # Handle log file
+          if [ -f "super-linter.log" ]; then
+            cp super-linter.log .github/linter-reports/
+          else
+            echo "No issues found" > .github/linter-reports/super-linter.log
+          fi
+          
+          # Create CSV report
+          echo "File,Line,Type,Message" > .github/linter-reports/lint_report.csv
+          if [ -f ".github/linter-reports/super-linter.log" ]; then
+            grep -E "(ERROR|WARNING)" .github/linter-reports/super-linter.log | \
+            awk -F':' '{
+              gsub(/[\[\]]/, "", $1);
+              print $2 "," $3 "," $1 "," $4
+            }' >> .github/linter-reports/lint_report.csv || true
+          fi
+          
+          # Create text report
+          if [ -f ".github/linter-reports/super-linter.log" ]; then
+            grep -E "(ERROR|WARNING)" .github/linter-reports/super-linter.log > .github/linter-reports/lint_report.txt || true
+          else
+            echo "No linting issues found" > .github/linter-reports/lint_report.txt
+          fi
+          
+          # Create summary for analysis_results.md
+          {
+            echo "### Super Linter Analysis Results"
+            echo ""
+            
+            if [ -f ".github/linter-reports/super-linter.log" ]; then
+              ERROR_COUNT=$(grep -c "ERROR" .github/linter-reports/super-linter.log || echo "0")
+              WARNING_COUNT=$(grep -c "WARNING" .github/linter-reports/super-linter.log || echo "0")
+              
+              echo "Found $ERROR_COUNT errors and $WARNING_COUNT warnings."
+              echo ""
+              
+              if [ "$ERROR_COUNT" -gt 0 ] || [ "$WARNING_COUNT" -gt 0 ]; then
+                echo "### Issues Found"
+                echo ""
+                grep -E "(ERROR|WARNING)" .github/linter-reports/super-linter.log | while IFS=':' read -r type file message; do
+                  echo "* **${type}** in \`${file}\`:"
+                  echo "  * ${message}"
+                  echo ""
+                done
+              else
+                echo "No issues found! The code passes all linting checks."
+              fi
+            else
+              echo "No linting results available."
+            fi
+            
+            echo ""
+            echo "### Recommendations"
+            echo ""
+            echo "1. Review and fix any reported issues"
+            echo "2. Run the linter locally to verify fixes"
+            echo "3. See the attached reports for details"
+          } > .github/linter-reports/analysis_results.md
+
+      - name: Upload Reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linter-reports
+          path: |
+            .github/linter-reports/lint_report.csv
+            .github/linter-reports/lint_report.json
+            .github/linter-reports/lint_report.txt
+            .github/linter-reports/super-linter.log
+            .github/linter-reports/analysis_results.md
+          retention-days: 5
+
+      - name: Setup Git Config
+        if: github.event_name != 'pull_request'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Create and Push Branch
+        if: github.event_name != 'pull_request'
+        id: create_branch
+        run: |
+          TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+          BRANCH_NAME="lint-suggestions-${TIMESTAMP}"
+          git checkout -b "$BRANCH_NAME"
+          
+          git add .github/linter-reports/
+          git commit -m "Add linting results from ${GITHUB_EVENT_NAME} trigger"
+          git push origin "$BRANCH_NAME"
+          
+          echo "branch_name=${BRANCH_NAME}" >> $GITHUB_OUTPUT
+          echo "base_branch=${{ github.event.repository.default_branch }}" >> $GITHUB_OUTPUT
+
+      - name: Add PR Comment
+        continue-on-error: true
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            try {
+              const fs = require('fs');
+              const resultsPath = '.github/linter-reports/analysis_results.md';
+              
+              if (fs.existsSync(resultsPath)) {
+                const comment = fs.readFileSync(resultsPath, 'utf8');
+                
+                const issueNumber = context.payload.pull_request ? context.payload.pull_request.number 
+                                  : (context.payload.issue ? context.payload.issue.number : null);
+                
+                if (!issueNumber) {
+                  console.log('No PR/Issue number found, skipping comment');
+                  return;
+                }
+                
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: issueNumber,
+                  body: comment
+                });
+              }
+            } catch (error) {
+              core.error('Failed to add PR comment: ' + error.message);
+            }
+
+      - name: Create Issue with Results
+        if: github.event_name != 'pull_request' && steps.create_branch.outputs.branch_name != ''
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            try {
+              const resultsPath = '.github/linter-reports/analysis_results.md';
+              if (fs.existsSync(resultsPath)) {
+                const results = fs.readFileSync(resultsPath, 'utf8');
+                const branchName = '${{ steps.create_branch.outputs.branch_name }}';
+                const baseBranch = '${{ steps.create_branch.outputs.base_branch }}';
+                const prUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/compare/${baseBranch}...${branchName}`;
+                
+                const body = `# Linting Results\n\n${results}\n\nTo create a PR, visit: ${prUrl}`;
+                
+                await github.rest.issues.create({
+                  ...context.repo,
+                  title: `Linting Results for branch: ${branchName}`,
+                  body: body,
+                  labels: ['linting']
+                });
+              }
+            } catch (error) {
+              core.warning('Failed to create issue: ' + error.message);
+            }
+
+      - name: Display Results Summary
+        run: |
+          if [ -f ".github/linter-reports/analysis_results.md" ]; then
+            cat ".github/linter-reports/analysis_results.md"
+            echo -e "\nAvailable Reports:"
+            ls -la .github/linter-reports/
+          else
+            echo "No linting results available."
+          fi
